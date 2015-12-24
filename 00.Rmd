@@ -1,0 +1,159 @@
+---
+title: "El agujero de la construcción"
+author: "Iñaki Úcar"
+date: "24 de diciembre de 2015"
+output: html_document
+---
+```{r, echo=FALSE, message=FALSE}
+load("data/00.RData")
+library(knitr)
+opts_chunk$set(fig.align="center")
+```
+
+Hace unos días, el Ministerio Hacienda publicaba [la lista de grandes morosos](http://www.eldiario.es/economia/lista-grandes-morosos-Hacienda_0_465803540.html), una lista de cerca de 5000 personas físicas y jurídicas (345 personas físicas y el resto jurídicas) con deudas superiores al millón de euros. Se publica [en formato PDF](https://www.agenciatributaria.gob.es/static_files/AEAT_Sede/NoIx/Listado_deudores_Art95bisLGT.pdf) con imágenes de forma que no sea indexable por motores de búsqueda. No obstante, el periódico El Confidencial recientemente ha publicado dicha lista [en formato CSV](https://github.com/ECLaboratorio/datos/blob/master/Listado_deudores_limpio.csv) ---es decir, en texto plano sí accesible por los búscadores--- en su repositorio de datos de GitHub.
+
+Al mismo tiempo, yo andaba trasteando con dicha lista para indagar en las deudas relacionadas con la burbuja inmobiliaria y, visto lo anterior, he decidido publicar este repositorio con mi propio set de datos (esta vez, en formato binario no indexable) y las primeras pesquisas (este documento), haciéndolo accesible por si alguien quisiera colaborar y ampliar el repositorio con nuevos análisis. Quedáis todos invitados a enviarme _pull requests_.
+
+Este fichero de datos está extraído con la ayuda de Acrobat, que tiene un buen motor para reconocer texto y que es capaz de convertir a formatos como Excel. A partir de ahí, el resultado contiene un puñado de errores: algunos son salvables, como veremos, y otros requieren una limpieza a mano de los datos, línea por línea, que no estoy dispuesto a realizar, así que viviré con ellos.
+
+Convendremos en que lo más importante aquí es el campo que representa el importe de la deuda. Afortunadamente, dado que tiene un formato bastante bien definido (son números con punto para separar los miles y coma para separar las dos posiciones decimales que invariablemente comparten todas las filas), limpiarlo resulta fácil, por lo que tengo bastante confianza en que los números son correctos. Este es el proceso seguido:
+
+```{r, eval=FALSE}
+library(magrittr)
+
+# Carga de los datos
+load("data/debtors.RData")
+
+# Nueva columna con las cifras saneadas
+debtors$sanitized <- 
+  debtors$Importe.Total.Deudas.Sanciones.Pendientes %>%
+  gsub("\xb7\xba\xba", ",00", .) %>%
+  gsub("[,\\. ]", "", .) %>%
+  gsub("n", "77", .) %>%
+  gsub("O", "0", .) %>%
+  as.numeric %>% divide_by(100)
+```
+
+La siguiente función servirá para comprobar si cierta empresa `x` pertenece al negocio inmobiliario o no. Para ello, puede verse que he definido una expresión regular con diversos fragmentos de palabras clave. Es probable que me haya dejado algunas, por lo que, si alguien ve cómo mejorar esto, que me lo haga saber (o me envíe un _pull request_).
+
+```{r, eval=FALSE}
+is_match <- function(x) 
+  grepl("CONSTRUCC|VIVIENDA|INMOBILIA|INMUEBL|URBAN", x, ignore.case=T)
+```
+
+Muchas empresas llevan estas palabras clave en el propio nombre, por lo que podemos hacer un primer filtrado por nombre.
+
+```{r, eval=FALSE}
+by_name <- debtors[is_match(debtors$Identificador.Deudor),]
+others <- debtors[!is_match(debtors$Identificador.Deudor),]
+```
+
+Evidentemente, otras muchas tendrán un nombre nada relacionado con dichas palabras. El siguiente paso, por tanto, será buscar por NIF/CIF en algún servicio online que nos diga la actividad de la empresa correspondiente. No he encontrado ninguna API cómoda para hacer esto (de nuevo, ¿alguien conoce algún servicio así?), por lo que he tirado de una web cualquiera ([esta](http://www.einforma.com/)) y web-scrapping, por lo que lo siguiente podría dejar de funcionar en cualquier momento.
+
+Dicha web es útil porque utiliza una URL bien definida para acceder a la ficha de una empresa por NIF/CIF y otra para realizar búsquedas. Ya en la ficha de una empresa, encontramos el campo CNAE (Clasificación Nacional de Actividades Económicas): justo lo que necesitamos. Con toda esta información, definimos una nueva función para extraer, dado un NIF/CIF, si una empresa pertenece al negocio inmobiliario o no.
+
+```{r, eval=FALSE}
+library(rvest)
+library(httr)
+library(digest)
+library(parallel)
+
+url_base <- "http://www.einforma.com"
+url_nif <- "/servlet/app/prod/ETIQUETA_EMPRESA/nif/"
+url_name <- "/servlet/app/prod/LISTA_EMPRESAS/razonsocial/"
+
+url_is_match <- function(...) {
+  html_session(paste0(url_base, ...), user_agent(digest(runif(1)))) %>%
+    html_node("td:contains(CNAE) + td") %>%
+    html_text %>%
+    is_match
+}
+```
+
+Ya estamos en posición de comprobar el NIF/CIF de todas las empresas no clasificadas hasta ahora (`others`). Nótese que en la función anterior, `url_is_match`, tomo la precaución de aleatorizar el `user_agent` para evitar que la web nos bloquee el acceso, ya que a continuación vamos a lanzar miles de peticiones en un intervalo corto de tiempo.
+
+A diferencia del campo importe, el campo NIF/CIF sí tiene errores y estos no se pueden arreglar automatizadamente. ¿Por qué? Porque es un campo que contiene números y letras y el reconocedor a veces confunde un cero por una _O_, un 8 por una _B_ (o viceversa), etc. Por tanto, tendremos que vivir con estos errores porque, como decía, no voy a repasar 5000 líneas a mano. El resultado es que algunas consultas a continuación fallarán, puesto que el campo es incorrecto, y habrá que tenerlo en cuenta.
+
+Nota: no corráis el siguiente fragmento, no merece la pena (tarda mucho y le vais a dar por el culo un poco al administrador de dicha web), y más aún cuando tenéis aquí disponibles todos los datos de este análisis sin necesidad de volver a lanzarlo.
+
+```{r, eval=FALSE}
+res_by_nif <- mclapply(others$NIF.CIF, function(nif) {
+  flag <- 2
+  # Si la consulta falla, saldrá un 2; si no, saldrá 1 o 0, TRUE o FALSE
+  try({ flag <- url_is_match(url_nif, nif) }, silent = TRUE)
+  flag
+}) %>% unlist
+
+by_nif <- others[res_by_nif==1,]
+errors <- others[res_by_nif==2,]
+others <- others[res_by_nif==0,]
+```
+
+Ya tenemos otra hornada de empresas inmobiliarias separadas por NIF/CIF. Además, tenemos en `errors` todas aquellas cuya consulta ha fallado y en `others` unas cuantas que sabemos que no se dedican al negocio de la construcción (dentro de los límites de la expresión regular definida antes).
+
+Vamos a rizar el rizo y darle una nueva pasada a los errores, pero esta vez buscaremos por nombre de empresa. Esto requiere más pasos (y por tanto es mucho más lento): realizar una búsqueda, extraer la URL de los resultados y comprobar la actividad como antes. Asumiremos que los nombres están más o menos correctos y completos y, por tanto, asumiremos que el resultado buscado es siempre el primero.
+
+De nuevo, no ejecutéis lo siguiente; no merece la pena. Un poco más de magia:
+
+```{r, eval=FALSE}
+res_by_search <- mclapply(errors$Identificador.Deudor, function(name) {
+  flag <- FALSE
+  try({
+    new_url <- html_session(paste0(url_base, url_name, gsub(" ", "+", name)),
+                            user_agent(digest(runif(1)))) %>%
+      html_node("table#nacional tbody tr") %>% 
+      html_attr("url")
+    flag <- url_is_match(new_url)
+  }, silent = TRUE)
+  flag
+}) %>% unlist
+
+by_search <- errors[res_by_search,]
+others <- rbind(others, errors[!res_by_search,])
+```
+
+Y aquí la última hornada de empresas. Veamos qué tenemos de cada:
+
+```{r}
+# Número de empresas identificadas por el nombre
+nrow(by_name)
+# Número de empresas identificadas por el NIF/CIF
+nrow(by_nif)
+# Número de empresas identificadas mediante búsqueda
+nrow(by_search)
+# Número de empresas no dedicadas a la construcción
+nrow(others)
+# Comprobación de que vamos haciendo las cosas bien
+nrow(debtors) == nrow(by_name) + nrow(by_nif) + nrow(by_search) + nrow(others)
+```
+
+Construimos el dataset final:
+
+```{r, eval=FALSE}
+debtors_bind <- rbind(by_name, by_nif, by_search)
+debtors_bind$group <- "construcción"
+others$group <- "otros"
+debtors_bind <- rbind(debtors_bind, others)
+```
+
+Y procedemos a despejar nuestras dudas. Primero, un boxplot de la distribución de las deudas:
+
+```{r, message=FALSE, fig.height=3}
+library(dplyr)
+library(ggplot2)
+
+ggplot(debtors_bind, aes(group, sanitized)) + 
+  geom_boxplot() + scale_y_log10() + coord_flip() +
+  ylab("Importe de la deuda") + theme(axis.title.y=element_blank())
+```
+
+En la construcción tenemos una distribución de deudas ligeramente más ancha, con una mediana mayor. También las deudas de los outliers son superiores, con tres empresas que superan los 100 millones de euros. Veamos ahora las proporciones:
+
+```{r, fig.height=2}
+ggplot(debtors_bind, aes(fill=group)) + theme_minimal() + coord_flip() +
+  geom_bar(aes("Número de empresas", 100*..count../sum(..count..)), position="dodge") +
+  geom_bar(aes("Deuda total", weight=100*sanitized/sum(sanitized)), position="dodge") +
+  ylab("%") + theme(axis.title.y=element_blank())
+```
+
+Casi ya en 2016, queda todavía patente el enorme agujero que dejó la burbuja inmobiliaria en este país. La mitad de los grandes deudores corresponde a dicho sector y en conjunto acumulan una deuda bastante superior al resto. Lideran con diferencia, además, el ránking de mayores deudas individuales. Un análisis bastante simplón y que no refleja seguramente nada que no supiéramos, pero verlo y constatarlo no deja de sorprenderme.
