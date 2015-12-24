@@ -14,7 +14,7 @@ Hace unos días, el Ministerio Hacienda publicaba [la lista de grandes morosos](
 
 Al mismo tiempo, yo andaba trasteando con dicha lista para indagar en las deudas relacionadas con la burbuja inmobiliaria y, visto lo anterior, he decidido publicar este repositorio con mi propio set de datos (esta vez, en formato binario no indexable) y las primeras pesquisas (este documento), haciéndolo accesible por si alguien quisiera colaborar y ampliar el repositorio con nuevos análisis. Quedáis todos invitados a enviarme _pull requests_.
 
-Este fichero de datos está extraído con la ayuda de Acrobat, que tiene un buen motor para reconocer texto y que es capaz de convertir a formatos como Excel. A partir de ahí, el resultado contiene un puñado de errores: algunos son salvables, como veremos, y otros requieren una limpieza a mano de los datos, línea por línea, que no estoy dispuesto a realizar, así que viviré con ellos.
+[Este fichero de datos](https://github.com/Enchufa2/spanish-debtors/blob/master/data/debtors.RData) está extraído con la ayuda de Acrobat, que tiene un buen motor para reconocer texto y que es capaz de convertir a formatos como Excel. A partir de ahí, el resultado contiene un puñado de errores: algunos son salvables, como veremos, y otros requieren una limpieza a mano de los datos, línea por línea, que no estoy dispuesto a realizar, así que viviré con ellos.
 
 Convendremos en que lo más importante aquí es el campo que representa el importe de la deuda. Afortunadamente, dado que tiene un formato bastante bien definido (son números con punto para separar los miles y coma para separar las dos posiciones decimales que invariablemente comparten todas las filas), limpiarlo resulta fácil, por lo que tengo bastante confianza en que los números son correctos. Este es el proceso seguido:
 
@@ -74,7 +74,7 @@ Ya estamos en posición de comprobar el NIF/CIF de todas las empresas no clasifi
 
 A diferencia del campo importe, el campo NIF/CIF sí tiene errores y estos no se pueden arreglar automatizadamente. ¿Por qué? Porque es un campo que contiene números y letras y el reconocedor a veces confunde un cero por una _O_, un 8 por una _B_ (o viceversa), etc. Por tanto, tendremos que vivir con estos errores porque, como decía, no voy a repasar 5000 líneas a mano. El resultado es que algunas consultas a continuación fallarán, puesto que el campo es incorrecto, y habrá que tenerlo en cuenta.
 
-Nota: no corráis el siguiente fragmento, no merece la pena (tarda mucho y le vais a dar por el culo un poco al administrador de dicha web), y más aún cuando tenéis aquí disponibles todos los datos de este análisis sin necesidad de volver a lanzarlo.
+Nota: no corráis el siguiente fragmento, no merece la pena (tarda mucho y le vais a dar por el culo un poco al administrador de dicha web), y más aún cuando [tenéis aquí disponibles todos los datos](https://github.com/Enchufa2/spanish-debtors/blob/master/data/00.RData) de este análisis sin necesidad de volver a lanzarlo.
 
 ```{r, eval=FALSE}
 res_by_nif <- mclapply(others$NIF.CIF, function(nif) {
