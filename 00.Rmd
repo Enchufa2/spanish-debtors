@@ -139,7 +139,6 @@ debtors_bind <- rbind(debtors_bind, others)
 Y procedemos a despejar nuestras dudas. Primero, un boxplot de la distribución de las deudas:
 
 ```{r, message=FALSE, fig.height=3}
-library(dplyr)
 library(ggplot2)
 
 ggplot(debtors_bind, aes(group, sanitized)) + 
@@ -157,3 +156,39 @@ ggplot(debtors_bind, aes(fill=group)) + theme_minimal() + coord_flip() +
 ```
 
 Casi ya en 2016, queda todavía patente el enorme agujero que dejó la burbuja inmobiliaria en este país. La mitad de los grandes deudores corresponde a dicho sector y en conjunto acumulan una deuda bastante superior al resto. Lideran con diferencia, además, el ránking de mayores deudas individuales. Un análisis bastante simplón y que no refleja seguramente nada que no supiéramos, pero verlo y constatarlo no deja de sorprenderme.
+
+### Actualización (25/12/2015)
+
+Tras ampliar el dataset [en la segunda entrega](01.html), me he dado cuenta de que los códigos CNAE entre 4000 y 4500 agrupan el sector de la construcción, por lo que podemos mejorar la exactitud del análisis anterior con este dato.
+
+```{r, eval=FALSE, message=FALSE}
+library(dplyr)
+
+new_bind <- left_join(debtors_bind, debtors) %>%
+  mutate(group = ifelse(group=="otros" & !is.na(CNAE.code) 
+                        & 4000 < CNAE.code & CNAE.code < 4500,
+                        "construcción", group))
+```
+
+Podemos calcular el número de empresas que hemos añadido a la lista con este método:
+
+```{r}
+# Empresas añadidas
+sum(new_bind$group == "construcción") - sum(debtors_bind$group == "construcción")
+```
+
+Y, por último, repetimos el análisis:
+
+```{r, fig.height=3}
+ggplot(new_bind, aes(group, sanitized)) + 
+  geom_boxplot() + scale_y_log10() + coord_flip() +
+  ylab("Importe de la deuda") + theme(axis.title.y=element_blank())
+```
+```{r, fig.height=2}
+ggplot(new_bind, aes(fill=group)) + theme_minimal() + coord_flip() +
+  geom_bar(aes("Número de empresas", 100*..count../sum(..count..)), position="dodge") +
+  geom_bar(aes("Deuda total", weight=100*sanitized/sum(sanitized)), position="dodge") +
+  ylab("%") + theme(axis.title.y=element_blank())
+```
+
+El número de empresas asociadas a la construcción supera así el 50 % y la deuda que acumulan se acerca un poco más al 60 %. No ha variado mucho.

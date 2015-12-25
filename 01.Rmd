@@ -1,0 +1,146 @@
+---
+title: "Ampliando el dataset"
+author: "Iñaki Úcar"
+date: "24 de diciembre de 2015"
+output: html_document
+---
+```{r, echo=FALSE, message=FALSE}
+load("data/01.RData")
+library(knitr)
+opts_chunk$set(fig.align="center")
+```
+
+Aprovechando que es festivo y no hay nadie mirando, vamos a tratar de ampliar el dataset con el CNAE de cada moroso. Seguiremos una metodología similar a la entrega anterior. Esto va a tardar un ratito...
+
+```{r, eval=FALSE, message=FALSE}
+library(rvest)
+library(httr)
+library(digest)
+library(parallel)
+library(dplyr)
+
+load("data/debtors.RData")
+
+url_base <- "http://www.einforma.com"
+url_nif <- "/servlet/app/prod/ETIQUETA_EMPRESA/nif/"
+url_name <- "/servlet/app/prod/LISTA_EMPRESAS/razonsocial/"
+
+get_inf <- function(...) {
+  s <- html_session(paste0(url_base, ...), user_agent(digest(runif(1)))) 
+  
+  cnae <- s %>% 
+    html_node("td:contains(CNAE) + td") %>% 
+    html_text %>%
+    strsplit(" - ") %>% 
+    unlist
+  objsoc <- s %>% 
+    html_node("td:contains(Objeto social) + td") %>% 
+    html_text
+  
+  c(cnae, objsoc)
+}
+
+res_by_nif <- do.call(rbind, mclapply(1:nrow(debtors), function(i) {
+  data <- data.frame(Identificador.Deudor = debtors[i,]$Identificador.Deudor,
+                     es.empresa = FALSE, 
+                     CNAE.code = NA, 
+                     CNAE.desc = NA, 
+                     Objeto.Social = NA)
+  
+  try({
+    inf <- get_inf(url_nif, debtors[i,]$NIF.CIF)
+    
+    data$es.empresa <- TRUE
+    data$CNAE.code <- as.numeric(inf[[1]])
+    data$CNAE.desc <- inf[[2]]
+    data$Objeto.Social <- inf[[3]]
+  }, silent = TRUE)
+  
+  data
+}))
+
+res_by_search <- do.call(rbind, 
+                         mclapply(1:nrow(debtors), function(i) {
+  data = res_by_nif[i,]
+  
+  if (!data$es.empresa) try({
+    new_url <- 
+      html_session(paste0(url_base, url_name, gsub(" ", "+", name)),
+                   user_agent(digest(runif(1)))) %>%
+      html_node("table#nacional tbody tr") %>% 
+      html_attr("url")
+    
+    inf <- get_inf(new_url)
+    
+    data$es.empresa <- TRUE
+    data$CNAE.code <- as.numeric(inf[[1]])
+    data$CNAE.desc <- inf[[2]]
+    data$Objeto.Social <- inf[[3]]
+  }, silent = TRUE)
+  
+  data
+}))
+
+debtors <- left_join(debtors, res_by_search)
+```
+
+Hemos asumido que las búsquedas fallidas corresponden a personas físicas. Y ya que nos poníamos, hemos sacado también el objeto social. Veamos cuántas empresas y personas hay:
+
+```{r}
+# Número de personas jurídicas (empresas)
+sum(res_by_search$es.empresa)
+# Número de personas físicas
+sum(!res_by_search$es.empresa)
+```
+
+792 personas físicas frente a [345 que reportaba eldiario.es](http://www.eldiario.es/economia/lista-grandes-morosos-Hacienda_0_465803540.html). Está claro que se nos han colado algunas empresas que no producen resultados. Para aislarlas, todavía tenemos una última baza: buscar las siglas de _Sociedad Anónima_, _Sociedad Limitada_, etc., al final del nombre. Ojo a la expresión regular, que se las trae:
+
+```{r, eval=FALSE}
+is_company <- function(x)
+  grepl("(\\.|,| )S(\\.| ){0,2}(L|L(\\.| ){0,2}U|A|C|A(\\.| ){0,2}T)(\\.)?", x)
+
+new.es.empresa <- debtors$es.empresa | is_company(debtors$Identificador.Deudor)
+debtors$es.empresa <- new.es.empresa
+```
+
+Volvemos a comprobar:
+
+```{r}
+# Número de personas físicas
+sum(!new.es.empresa)
+```
+
+No va mal. Un vistazo rápido revela que quedan por ahí asociaciones, clubes de fútbol, fundaciones, cooperativas, universidades... Démosle otra vuelta un poco más _ad hoc_:
+
+```{r, eval=FALSE}
+check_adhoc <- function(x)
+  grepl("CLUB|LIMITED|ASOC|COOP|FUND(ACI|\\.)|FEDERACI|DISTRIBUID|UNIVERSI|COMPAÑ|SOCI(E)?DAD|CONSORCI|CETECSER|DESTILER|DITRALSA|ELABORAD|FRUABISL|GESTI(O|Ó)N|LEGION|JUNTA|MANCOMUNIDAD|SERVIC|GOLF|ORGANIZA|TRASVASE|HOLDING|TRADER|OUTLET|GANADERA|SEGURIDAD|ENERGETIC|DIETMAR|GRAMANET|VALGRICENTRI", x)
+
+debtors$es.empresa <- debtors$es.empresa | check_adhoc(debtors$Identificador.Deudor)
+```
+
+Lo que nos deja, finalmente,
+
+```{r}
+# Número de personas físicas
+sum(!debtors$es.empresa)
+```
+
+Y paso a sobreescribir el dataset ampliado.
+
+```{r, eval=FALSE}
+rm(list=setdiff(ls(), "debtors"))
+save.image("data/debtors.RData")
+```
+
+Antes de cerrar este capítulo, echémosle un vistazo a los nuevos datos. ¿Cómo se distribuyen las empresas por actividad económica? Veamos un histograma por código CNAE:
+
+```{r, message=FALSE, fig.height=3}
+library(ggplot2)
+
+ggplot(debtors, aes(CNAE.code)) + geom_histogram(binwidth=500) +
+  scale_x_continuous(breaks=seq(0, 10000, 1000)) +
+  ylab("Número de empresas")
+```
+
+Revelador. Hay un pico enorme de empresas entre 4000 y 4500. ¿De qué serán? Efectivamente: [de la construcción](http://www.cnae.com.es/lista-actividades.php). El siguiente grupo en volumen, entre 4500 y 5000, se corresponde con mayoristas. Y el tercero, entre 6500 y 7000, engloba actividades financieras e inmobiliarias.
