@@ -4,5 +4,5 @@ Repositorio con la lista de deudores por encima del millón de euros publicada p
 
 Entregas:
 
-* [00. El agujero de la construcción](https://htmlpreview.github.io/?https://github.com/Enchufa2/spanish-debtors/blob/master/00.html)
-* [01. Ampliando el dataset](https://htmlpreview.github.io/?https://github.com/Enchufa2/spanish-debtors/blob/master/01.html)
+* [00. El agujero de la construcción](https://enchufa2.github.io/spanish-debtors/00.html)
+* [01. Ampliando el dataset](https://enchufa2.github.io/spanish-debtors/01.html)
